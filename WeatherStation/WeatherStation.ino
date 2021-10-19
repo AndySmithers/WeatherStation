@@ -42,6 +42,7 @@
  *    
  */
 
+
 #include <avr/wdt.h>                                                                        // Watchdog timer
 #include <avr/interrupt.h>                                                                  // Interrupts
 #include "nRF24L01.h"
@@ -184,10 +185,7 @@ void setup()
     lcd.setCursor(0,0);
     lcd.print("Weather Station.");
     lcd.setCursor(0,1);
-    if (!rtc.begin())
-      lcd.print("RTC Not found!");
-    else  
-      lcd.print("....Starting....");
+    lcd.print("  Version 1.0   ");
 
 
   // Setup and configure rf radio
