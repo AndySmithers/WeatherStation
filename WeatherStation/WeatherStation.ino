@@ -54,6 +54,7 @@
 #include <ArduinoSort.h>
 #include <Timezone.h>
 #include <CircularBuffer.h>
+#include <EEPROM.h>
 
 // Sensor Pin Definitions
 #define RainPin 2
@@ -116,6 +117,7 @@ byte BottomLineDataCycle;           // Cycling weather information counter on Bo
 
 // Rain variables
 float RainBucket;                   // Daily Rain Bucket - empties at midnight
+byte RainCount;                     // For EEPROM non-volatile daily rain storage
 float RainPerHour;                  // Rolling rain per hour
 byte RainHourBufferToShift;         // Number of RainHourBuffer entries to shift that are greater than 1 hour ago
 
@@ -178,14 +180,13 @@ void setup()
 {
 //    Serial.begin(115200);
 //    Serial.println("Weather Station");
-    ThisWindGust = 99;                        // Used as marker in Thingspeak to indicate Arduino reset event
     wdt_enable(WDTO_8S);                      // Enable Watchdog timer   
     SensorFound = false;
     lcd.begin(16, 2);
     lcd.setCursor(0,0);
     lcd.print("Weather Station.");
     lcd.setCursor(0,1);
-    lcd.print("  Version 1.0   ");
+    lcd.print("  Version 1.2   ");
 
 
   // Setup and configure rf radio
@@ -202,9 +203,10 @@ void setup()
 
 
 // Get initial values for Day and Hour so we can start rain buckets
+    rtc.begin();
     DateTime now = rtc.now();
     time_t utc = now.unixtime();
-    time_t LocalTime = myTZ.toLocal(utc, &tcr);
+    LocalTime = myTZ.toLocal(utc, &tcr);
     LastDay = day(LocalTime);
 
     if (! bme.begin(0x76)) 
@@ -232,6 +234,7 @@ void setup()
     pinMode(RainPin, INPUT_PULLUP);
     attachInterrupt (digitalPinToInterrupt(RainPin), RainIRQ, FALLING);
     RainBucket = 0;
+    RainCount = 0;
     RainPerHour = 0;
     RainDetected = false;
 
@@ -251,7 +254,7 @@ void loop(void)
   float TemperatureArray[3],HumidityArray[3],PressureArray[3];  // We take the median of 3 readings
   LoopMillis = millis();
   char LCD_Bottom_Line[17];
-  char ReadString[10];                                          // Char array to hold converted read back values
+  char ReadString[16];                                          // Char array to hold converted read back values
   wdt_reset();                                                  // Reset watchdog timer
   float ThisWindSpeed;
   int ThisWindDirection;
@@ -284,7 +287,7 @@ void loop(void)
                sprintf(LCD_Bottom_Line,"Temp:%s C",LCD_Bottom_Line_Data);
       break;  
       case 1 : dtostrf(CorrectedHumidity,8,1,LCD_Bottom_Line_Data);
-               sprintf(LCD_Bottom_Line,"Humid:%s %",LCD_Bottom_Line_Data);
+               sprintf(LCD_Bottom_Line,"Humid:%s %%",LCD_Bottom_Line_Data);
       break;  
       case 2 : dtostrf((PressureArray[1]/100 * PRESS_CAL),6,1,LCD_Bottom_Line_Data);
                sprintf(LCD_Bottom_Line,"Press:%s hPa",LCD_Bottom_Line_Data);
@@ -339,6 +342,8 @@ void loop(void)
     if (RainDetected)                                             // Rain IRQ triggered
       {
       RainBucket+=RAIN;                                           // Increase daily rain counter
+      RainCount+=1;
+      EEPROM.update(day(LocalTime),RainCount);
       RainHourBuffer.push(LoopMillis);                            // Push one record into hourly buffer
       RainDetected=false;                                         // Reset rain IRQ trigger
       }  
@@ -361,6 +366,8 @@ void loop(void)
     if ((day(LocalTime) != LastDay))
       {
       RainBucket = 0;
+      RainCount = 0;
+      EEPROM.update(day(LocalTime),RainCount);
       LastDay = day(LocalTime);
       TimeSynced = false;                                         // Do an internet time sync at midnight every day.
       }
@@ -405,8 +412,7 @@ void loop(void)
     if (ReadString[0]==' ') ReadString[0]='0';
 
     // Copy Pressure to array to send to Pi
-    if (SensorFound)        
-      for (int i = 9; i < 13; i++) PayloadString[i] = ReadString[i-9];
+    for (int i = 9; i < 13; i++) PayloadString[i] = ReadString[i-9];
 
     PayloadString[13] = 'R';                                    // Set Dail Rain marker in Payload string
     dtostrf(RainBucket,5,1,ReadString);
@@ -563,10 +569,14 @@ void SyncToRTC(time_t UnixTime)
  
      if ((abs(TimeDiff) > 60) && (!TimeSynced))
     	{
-    	if (RTC == true) rtc.adjust(UnixTime);
-      else setTime(UnixTime);
+    	if (RTC) 
+    	  rtc.adjust(UnixTime);
+      else
+        setTime(UnixTime);
       TimeSynced = true;
-    	}   
+    	}
+   RainCount = EEPROM.read(day(LocalTime)); 
+   RainBucket = RainCount * RAIN;    
   }
 
 void PrintDateTime(time_t t)
