@@ -70,8 +70,7 @@
 #define TEMP_OFFSET 0.00
 #define HUMID_CAL 1.01
 #define HUMID_OFFSET 0.00
-#define WIND_GUST_CAL 2.984
-#define WIND_SPEED_CAL 0.149
+#define WIND_CAL 1.492
 #define BATTERY_CAL 63.74
 #define RAIN 0.2794
 
@@ -135,6 +134,8 @@ byte LastDay;
 // WindSpeed sensor interrupt counter
 volatile int WindSpeedInterruptCounter;
 volatile int WindGustInterruptCounter;
+volatile unsigned long LastWindInterrupt;
+volatile unsigned long WindInterruptTime;
 
 // Wind Direction values
 float WindDirectionVoltage[] = {3.84,1.98,2.25,0.41,0.45,0.32,0.90,0.62,1.40,1.19,3.08,2.93,4.62,4.04,4.33,3.43};
@@ -264,7 +265,7 @@ void loop(void)
   if (LoopMillis > NextWindGustCycle)                           // Capture wind gust every 0.25s
     {
     NextWindGustCycle = LoopMillis + WIND_GUST_LOOP_TIME;       // Calculate next wind gust capture
-    ThisWindSpeed = WindGustInterruptCounter*WIND_GUST_CAL;
+    ThisWindSpeed = WindGustInterruptCounter*2.984;
     if (ThisWindSpeed > ThisWindGust)
       ThisWindGust = ThisWindSpeed;                             // This captured gust is bigger than any since the last 10 second cycle
     WindGustInterruptCounter = 0;                               // Reset WindGust interrupt for next cycle
@@ -331,9 +332,9 @@ void loop(void)
     WindSpeed=0;                                                  // Initialise wind speed for average calculation
     WindDirection=0;                                              // Initialise Wind direction for average calculation
     WindGust=0;
-    ThisWindSpeed=WindSpeedInterruptCounter*WIND_SPEED_CAL;
-    WindSpeedInterruptCounter=0;
+    ThisWindSpeed=WindSpeedInterruptCounter*0.1492;
     WindSpeedBuffer.push(ThisWindSpeed);                          // Push one record into Wind Speed buffer
+    WindSpeedInterruptCounter=0;
     WindDirIndex = GetWindDirection();
     WindDirectionBuffer.push(WindDirectionDegrees[WindDirIndex]); // Push one record into Wind Direction buffer
     WindGustBuffer.push(ThisWindGust);                            // Push the largest wind gust into wind gust buffer
@@ -431,7 +432,7 @@ void loop(void)
     for (int WindLoop = 0; WindLoop < WindSpeedBuffer.size(); WindLoop++)
         WindSpeed+=WindSpeedBuffer[WindLoop];
     WindSpeed = WindSpeed / WindSpeedBuffer.size();
-    
+   
 
     for (int WindLoop = 0; WindLoop <WindGustBuffer.size(); WindLoop++)
         {
@@ -518,8 +519,13 @@ void SendToRadio(bool SyncPayload)
 
 ISR(PCINT1_vect)                                                                      // WindSpeed Sensor interrupt
 {
+  WindInterruptTime=millis();
+  if (WindInterruptTime > (LastWindInterrupt + 10))
+    {
+    LastWindInterrupt=WindInterruptTime;
     WindSpeedInterruptCounter++;
     WindGustInterruptCounter++;
+    }
 }
 
 int GetWindDirection()
