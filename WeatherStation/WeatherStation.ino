@@ -8,12 +8,14 @@
  *    A Wind gust cycle that updates the fastest wind gust every 250ms
  *    A 10s main loop that collects all weather data and sends to a recieving Raspberry Pi for processing and display.
  *    
- *    For wind reporting, wind gusts are updated every 250ms.
+ *    For wind reporting, wind gusts are updated every 500ms.
  *    Wind speed is averaged over a 10 minute period using a circular buffer
  *    Direction is also averaged over the same 10 minute period
  *    
  *    For rainfall, a calibrated tipping bucket sensor is moniored for a 24 hour period, reset at midnight. 
  *    A rolling 1 hour buffer gives the rainfall per hour reading.
+ *    The daily rainfall is logged in EEPROM so will survive a power cycle
+ *    Hourly rain indicator will be reset after a power cycle
  *    
  *    Every 10 seconds all data is sent to the Raspberry Pi receiver as 2 packets.
  *    The first packet of 32 bytes has all weather data encoded like this:
@@ -68,7 +70,8 @@
 #define TEMP_OFFSET 0.00
 #define HUMID_CAL 1.01
 #define HUMID_OFFSET 0.00
-#define WIND_CAL 1.492
+#define WIND_GUST_CAL 2.984
+#define WIND_SPEED_CAL 0.149
 #define BATTERY_CAL 63.74
 #define RAIN 0.2794
 
@@ -132,7 +135,6 @@ byte LastDay;
 // WindSpeed sensor interrupt counter
 volatile int WindSpeedInterruptCounter;
 volatile int WindGustInterruptCounter;
-volatile unsigned long LastWindSpeedInterrupt;
 
 // Wind Direction values
 float WindDirectionVoltage[] = {3.84,1.98,2.25,0.41,0.45,0.32,0.90,0.62,1.40,1.19,3.08,2.93,4.62,4.04,4.33,3.43};
@@ -262,7 +264,7 @@ void loop(void)
   if (LoopMillis > NextWindGustCycle)                           // Capture wind gust every 0.25s
     {
     NextWindGustCycle = LoopMillis + WIND_GUST_LOOP_TIME;       // Calculate next wind gust capture
-    ThisWindSpeed = WindGustInterruptCounter*2/WIND_CAL;
+    ThisWindSpeed = WindGustInterruptCounter*WIND_GUST_CAL;
     if (ThisWindSpeed > ThisWindGust)
       ThisWindGust = ThisWindSpeed;                             // This captured gust is bigger than any since the last 10 second cycle
     WindGustInterruptCounter = 0;                               // Reset WindGust interrupt for next cycle
@@ -329,7 +331,7 @@ void loop(void)
     WindSpeed=0;                                                  // Initialise wind speed for average calculation
     WindDirection=0;                                              // Initialise Wind direction for average calculation
     WindGust=0;
-    ThisWindSpeed=WindSpeedInterruptCounter/10*WIND_CAL;
+    ThisWindSpeed=WindSpeedInterruptCounter*WIND_SPEED_CAL;
     WindSpeedInterruptCounter=0;
     WindSpeedBuffer.push(ThisWindSpeed);                          // Push one record into Wind Speed buffer
     WindDirIndex = GetWindDirection();
@@ -516,12 +518,8 @@ void SendToRadio(bool SyncPayload)
 
 ISR(PCINT1_vect)                                                                      // WindSpeed Sensor interrupt
 {
-  if (millis() - LastWindSpeedInterrupt > 10)                                         // Once every 10ms would be 150MPH
-    {
     WindSpeedInterruptCounter++;
     WindGustInterruptCounter++;
-    LastWindSpeedInterrupt = millis();  
-    }
 }
 
 int GetWindDirection()
