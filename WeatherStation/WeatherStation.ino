@@ -142,7 +142,7 @@ float WindDirectionVoltage[] = {3.84,1.98,2.25,0.41,0.45,0.32,0.90,0.62,1.40,1.1
 int WindDirectionDegrees[] = {0,22,45,67,90,112,135,157,180,202,225,247,270,292,315,337};
 
 // Wind variables
-byte WindSpeed;                      // Average over a rolling 10 minute cycle
+unsigned long WindSpeed;            // Average over a rolling 10 minute cycle
 int WindDirection;                  // Average over a rolling 10 minute cycle
 byte WindDirIndex;                   // Index value of Wind Direction voltage array value
 byte WindGust;                       // Peak value over a rolling 10 minute cycle
