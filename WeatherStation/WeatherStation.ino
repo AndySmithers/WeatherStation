@@ -122,6 +122,7 @@ float RainBucket;                   // Daily Rain Bucket - empties at midnight
 byte RainCount;                     // For EEPROM non-volatile daily rain storage
 float RainPerHour;                  // Rolling rain per hour
 byte RainHourBufferToShift;         // Number of RainHourBuffer entries to shift that are greater than 1 hour ago
+bool ResetRainEEPROM;
 
 // Rain Interrupt variables
 volatile unsigned long LastRainMillis;       // For rain IRQ de-bounce
@@ -144,11 +145,11 @@ int WindDirectionDegrees[] = {0,22,45,67,90,112,135,157,180,202,225,247,270,292,
 // Wind variables
 unsigned long WindSpeed;            // Average over a rolling 10 minute cycle
 int WindDirection;                  // Average over a rolling 10 minute cycle
-byte WindDirIndex;                   // Index value of Wind Direction voltage array value
-byte WindGust;                       // Peak value over a rolling 10 minute cycle
-byte ThisWindGust;                   // Maximum wind gust for every 250ms wind gust cycle
-byte LCD_WindSpeed;                  // For display on LCD only (LCD display is asynchronous WRT the windspeed average calculation
-byte LCD_WindGust;                   // For display on LCD only (LCD display is asynchronous WRT the wind gust peak detection
+byte WindDirIndex;                  // Index value of Wind Direction voltage array value
+byte WindGust;                      // Peak value over a rolling 10 minute cycle
+byte ThisWindGust;                  // Maximum wind gust for every 250ms wind gust cycle
+byte LCD_WindSpeed;                 // For display on LCD only (LCD display is asynchronous WRT the windspeed average calculation
+byte LCD_WindGust;                  // For display on LCD only (LCD display is asynchronous WRT the wind gust peak detection
 
 float CorrectedTemperature;         // 3 readings are taken and we take the median value and multiply by an empirical correction value
 float CorrectedHumidity;            // 3 readings are taken and we take the median value and multiply by an empirical correction value
@@ -365,16 +366,6 @@ void loop(void)
         RainHourBuffer.shift();                                     // Lose any record older than 1 hour
       }  
 
-//Reset the day rain bucket if we have changed day
-    if ((day(LocalTime) != LastDay))
-      {
-      RainBucket = 0;
-      RainCount = 0;
-      EEPROM.update(day(LocalTime),RainCount);
-      LastDay = day(LocalTime);
-      TimeSynced = false;                                         // Do an internet time sync at midnight every day.
-      }
-
 
 //Temperature, Humidity, Pressure
     if (SensorFound)
@@ -453,6 +444,14 @@ void loop(void)
     WindSpeed=0;
     WindGust=0;                    
 
+    // Trigger Time sync at midnight
+    if (day(LocalTime) != LastDay)
+      {
+      TimeSynced = false;
+      ResetRainEEPROM = false;
+      }
+
+
     SendToRadio(true);
     }
   else if (VoltageSent == false) // Send status just once after every data send
@@ -503,12 +502,13 @@ void SendToRadio(bool SyncPayload)
     AckPayload[ReturnPayloadLength]=0;
     ReturnUnixTime = atol(AckPayload);
 
-    // Only Sync RTC and set TimeValid IF we are in a transmit weather data cycle (rather than battery voltage) AND  Retrun Unix time is in a sensible range AND we get two valid UnixTimes in sequence.
+    // Only Sync RTC and set TimeValid IF we are in a transmit weather data cycle (rather than battery voltage) AND  Retrun Unix time is in a sensible range AND TimeSynced is false (after reset or at midnight).
     if (SyncPayload)
       {
       if ((ReturnUnixTime>MinUnixTime) && (ReturnUnixTime<MaxUnixTime))
         {
-        SyncToRTC(ReturnUnixTime);
+        if (!TimeSynced)
+          SyncToRTC(ReturnUnixTime);
         TimeValid=true;           
         }
       else
@@ -560,6 +560,7 @@ void SyncToRTC(time_t UnixTime)
   {
     time_t utc;
     char buf1[20];
+    TimeSynced = true;
     if (RTC == true)
       {
       DateTime RTC_now = rtc.now();
@@ -570,17 +571,28 @@ void SyncToRTC(time_t UnixTime)
     LocalTime = myTZ.toLocal(utc, &tcr);
     LocalServerTime = myTZ.toLocal(UnixTime, &tcr);
     long TimeDiff = utc-UnixTime;
- 
-     if ((abs(TimeDiff) > 60) && (!TimeSynced))
+    if (abs(TimeDiff) > 60)
     	{
     	if (RTC) 
     	  rtc.adjust(UnixTime);
       else
         setTime(UnixTime);
-      TimeSynced = true;
     	}
-   RainCount = EEPROM.read(day(LocalTime)); 
-   RainBucket = RainCount * RAIN;    
+   if ((hour(LocalServerTime)==0) && (!ResetRainEEPROM))
+   // It's just gone midnight and we haven't yet reset the Rain count and EEPROM value.
+    {
+    RainBucket = 0;
+    RainCount = 0;
+    EEPROM.update(day(LocalTime),RainCount);
+    LastDay = day(LocalTime);
+    ResetRainEEPROM = true;      
+    }
+   else
+   // A time sync has been triggered because of a restart, thus we need to read the current day's rain from EEPROM
+    { 
+    RainCount = EEPROM.read(day(LocalTime)); 
+    RainBucket = RainCount * RAIN;
+    }    
   }
 
 void PrintDateTime(time_t t)
