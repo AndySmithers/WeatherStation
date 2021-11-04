@@ -112,7 +112,7 @@ const uint64_t WritePipe = 0x544d52687CLL;
 
 // Initialize various strings
 char PayloadString[] = "T00.0H00P0000R000.0r00.9W0000000";
-char AckPayload[32];                // Returned Unix time from Pi
+char AckPayload[33];                // Returned Unix time from Pi
 char DateTimeString[17];            // For display on LCD
 byte BottomLineDataCycle;           // Cycling weather information counter on Bottom line of LCD
 
@@ -122,7 +122,7 @@ float RainBucket;                   // Daily Rain Bucket - empties at midnight
 byte RainCount;                     // For EEPROM non-volatile daily rain storage
 float RainPerHour;                  // Rolling rain per hour
 byte RainHourBufferToShift;         // Number of RainHourBuffer entries to shift that are greater than 1 hour ago
-bool ResetRainEEPROM;
+bool ResetRainEEPROM;               // Flag for resetting daily rain count EEPROM location at midnight
 
 // Rain Interrupt variables
 volatile unsigned long LastRainMillis;       // For rain IRQ de-bounce
@@ -140,7 +140,7 @@ volatile unsigned long WindInterruptTime;
 
 // Wind Direction values
 float WindDirectionVoltage[] = {3.84,1.98,2.25,0.41,0.45,0.32,0.90,0.62,1.40,1.19,3.08,2.93,4.62,4.04,4.33,3.43};
-int WindDirectionDegrees[] = {0,22,45,67,90,112,135,157,180,202,225,247,270,292,315,337};
+int WindDirectionDegrees[] = {0,337,315,292,270,247,225,202,180,157,135,112,90,67,45,22};
 
 // Wind variables
 unsigned long WindSpeed;            // Average over a rolling 10 minute cycle
@@ -168,9 +168,6 @@ long MinUnixTime = 1569888000; // October 1st 2019
 long ReturnUnixTime;
 bool TimeValid;               //Indicates return payload time stamp from Raspberry Pi is valid.
 
-// Do we have an RTC?
-boolean RTC = true;
-
 // BME280 Sensor Found?
 boolean SensorFound;
 
@@ -184,13 +181,17 @@ void setup()
 {
 //    Serial.begin(115200);
 //    Serial.println("Weather Station");
+
+//for (int E = 1;E<32;E++)
+//  EEPROM.update(E,0);
+
     wdt_enable(WDTO_8S);                      // Enable Watchdog timer   
     SensorFound = false;
     lcd.begin(16, 2);
     lcd.setCursor(0,0);
     lcd.print("Weather Station.");
     lcd.setCursor(0,1);
-    lcd.print("  Version 1.2   ");
+    lcd.print("  Version 1.3   ");
 
 
   // Setup and configure rf radio
@@ -208,9 +209,8 @@ void setup()
 
 // Get initial values for Day and Hour so we can start rain buckets
     rtc.begin();
-    DateTime now = rtc.now();
-    time_t utc = now.unixtime();
-    LocalTime = myTZ.toLocal(utc, &tcr);
+    RTC_now = rtc.now();
+    LocalTime = myTZ.toLocal(RTC_now.unixtime(), &tcr);
     LastDay = day(LocalTime);
 
     if (! bme.begin(0x76)) 
@@ -445,10 +445,12 @@ void loop(void)
     WindGust=0;                    
 
     // Trigger Time sync at midnight
+    RTC_now = rtc.now();
+    LocalTime = myTZ.toLocal(RTC_now.unixtime(), &tcr);
     if (day(LocalTime) != LastDay)
       {
       TimeSynced = false;
-      ResetRainEEPROM = false;
+      ResetRainEEPROM = true;
       }
 
 
@@ -498,11 +500,18 @@ void SendToRadio(bool SyncPayload)
   if (radio.isAckPayloadAvailable())
     {
     ReturnPayloadLength = radio.getDynamicPayloadSize();
-    radio.read(&AckPayload, ReturnPayloadLength);
-    AckPayload[ReturnPayloadLength]=0;
-    ReturnUnixTime = atol(AckPayload);
+    // Non-nonsensical payload
+    if ((ReturnPayloadLength < 33) && (ReturnPayloadLength > 9))
+      {
+      radio.read(&AckPayload, ReturnPayloadLength);
+      AckPayload[ReturnPayloadLength]=0;
+      ReturnUnixTime = atol(AckPayload);
+      }
+    else
+    // Nonsensical payload
+      ReturnUnixTime = 0;  
 
-    // Only Sync RTC and set TimeValid IF we are in a transmit weather data cycle (rather than battery voltage) AND  Retrun Unix time is in a sensible range AND TimeSynced is false (after reset or at midnight).
+    // Only Sync RTC and set TimeValid IF we are in a transmit weather data cycle (rather than battery voltage) AND  Return Unix time is in a sensible range AND TimeSynced is false (after reset or at midnight).
     if (SyncPayload)
       {
       if ((ReturnUnixTime>MinUnixTime) && (ReturnUnixTime<MaxUnixTime))
@@ -558,34 +567,22 @@ void RainIRQ()
 
 void SyncToRTC(time_t UnixTime)
   {
-    time_t utc;
     char buf1[20];
     TimeSynced = true;
-    if (RTC == true)
-      {
-      DateTime RTC_now = rtc.now();
-      utc = RTC_now.unixtime();
-      }
-    else  
-      utc = now();
-    LocalTime = myTZ.toLocal(utc, &tcr);
+    RTC_now = rtc.now();
+    LocalTime = myTZ.toLocal(RTC_now.unixtime(), &tcr);
     LocalServerTime = myTZ.toLocal(UnixTime, &tcr);
-    long TimeDiff = utc-UnixTime;
+    long TimeDiff = RTC_now.unixtime()-UnixTime;
     if (abs(TimeDiff) > 60)
-    	{
-    	if (RTC) 
     	  rtc.adjust(UnixTime);
-      else
-        setTime(UnixTime);
-    	}
-   if ((hour(LocalServerTime)==0) && (!ResetRainEEPROM))
+   if (ResetRainEEPROM)
    // It's just gone midnight and we haven't yet reset the Rain count and EEPROM value.
     {
     RainBucket = 0;
     RainCount = 0;
     EEPROM.update(day(LocalTime),RainCount);
     LastDay = day(LocalTime);
-    ResetRainEEPROM = true;      
+    ResetRainEEPROM = false;      
     }
    else
    // A time sync has been triggered because of a restart, thus we need to read the current day's rain from EEPROM
