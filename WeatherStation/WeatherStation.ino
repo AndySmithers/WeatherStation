@@ -140,7 +140,7 @@ volatile unsigned long WindInterruptTime;
 
 // Wind Direction values
 float WindDirectionVoltage[] = {3.84,1.98,2.25,0.41,0.45,0.32,0.90,0.62,1.40,1.19,3.08,2.93,4.62,4.04,4.33,3.43};
-int WindDirectionDegrees[] = {0,337,315,292,270,247,225,202,180,157,135,112,90,67,45,22};
+int WindDirectionDegrees[] = {0,22,45,67,90,112,135,157,180,202,225,247,270,292,315,337};
 
 // Wind variables
 unsigned long WindSpeed;            // Average over a rolling 10 minute cycle
